@@ -153,8 +153,3 @@ psyche/
 ISC License. See [`LICENSE`](LICENSE) for details.
 
 
----
-
-## License
-
-ISC License. See [`LICENSE`](LICENSE) for details.
