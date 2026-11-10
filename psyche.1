@@ -1,0 +1,113 @@
+.TH PSYCHE 1 psyche\-VERSION
+.SH NAME
+psyche \- minimalist Xray TUN VPN client for Linux
+.SH SYNOPSIS
+.B psyche
+.RB [ \-u
+.IR url ]
+.RB [ \-f
+.IR file ]
+.RB [ \-d
+.IR dev ]
+.RB [ \-\-fp
+.IR profile ]
+.RB [ \-h ]
+.SH DESCRIPTION
+.B psyche
+is a minimalist terminal user interface VPN client for Linux that orchestrates
+Xray-core in TUN mode. Designed with a minimalist philosophy, it operates with zero
+graphical toolkit dependencies (using raw termios), automatically inherits terminal
+emulator color schemes, and provides full system-wide Layer 3 routing.
+.P
+On first launch without configuration, a minimal setup window prompts for a
+subscription URL. Once validated, nodes are cached locally and the main navigator
+launches.
+.SH OPTIONS
+.TP
+.BI \-u " url" ", \-\-url " url
+Fetch and load subscription nodes from the specified URL.
+.TP
+.BI \-f " file" ", \-\-file " file
+Load subscription nodes from a local text file.
+.TP
+.BI \-d " dev" ", \-\-dev " dev
+Override the default TUN interface name (default configured in config.h, usually
+.BR psyche0 ).
+.TP
+.BI \-\-fp " profile"
+Set the initial uTLS fingerprint profile (e.g.
+.BR chrome ,
+.BR randomized ,
+.BR firefox ,
+.BR safari ,
+.BR ios ).
+.TP
+.B \-h, \-\-help
+Display usage information and exit.
+.SH KEYBINDINGS
+.TP
+.B Enter
+Connect to the selected node, or disconnect if already connected to it.
+.TP
+.B j, Down
+Move selection down.
+.TP
+.B k, Up
+Move selection up.
+.TP
+.B g
+Jump to the top of the node list.
+.TP
+.B G
+Jump to the bottom of the node list.
+.TP
+.B d
+Disconnect the active VPN tunnel.
+.TP
+.B f
+Cycle TLS/uTLS fingerprint profile. Relinks the active tunnel if connected.
+.TP
+.B p
+Perform a TCP ping latency probe against the selected node.
+.TP
+.B /
+Enter search/filter mode. Press Escape to clear filter.
+.TP
+.B s
+Enter or change the subscription URL.
+.TP
+.B u
+Update nodes by re-fetching the configured subscription URL.
+.TP
+.B q
+Disconnect and quit cleanly.
+.SH PRIVACY AND LEAK MITIGATION
+.B psyche
+incorporates kernel-level protections:
+.IP \(bu 2
+Parent Death Signal (\fBPR_SET_PDEATHSIG\fR): Ensures the child Xray process is
+instantly terminated if Psyche exits or terminates unexpectedly.
+.IP \(bu 2
+IPv6 Shielding: Temporarily disables IPv6 on all interfaces during an active link
+to eliminate dual-stack address leaks.
+.IP \(bu 2
+Safe Routing: Routes traffic via \fB0.0.0.0/1\fR and \fB128.0.0.0/1\fR to prevent
+routing loops and preserve original gateway interfaces.
+.SH FILES
+.TP
+.I ~/.config/psyche/config.json
+Application configuration (subscription URL, interface name, fingerprint).
+.TP
+.I ~/.config/psyche/cached_nodes.txt
+Offline cache of subscription nodes.
+.SH CUSTOMIZATION
+.B psyche
+is configured at compile time through
+.I config.h
+(copied from
+.IR config.def.h ).
+Edit this file to alter default ports, interface names, and visual parameters.
+.SH AUTHORS
+Written for users of lightweight Linux environments.
+.SH LICENSE
+See the LICENSE file for details.

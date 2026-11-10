@@ -1,0 +1,16 @@
+# Build artifacts
+*.o
+*.a
+*.so
+psyche
+config.h
+psyche-*.tar.gz
+
+# Precompiled binaries and archives
+xray
+*.zip
+*.tar
+*.gz
+
+# Runtime files
+/tmp/psyche_*
