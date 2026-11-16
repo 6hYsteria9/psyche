@@ -28,13 +28,22 @@ typedef struct {
     int http_port;
     char fingerprint[32];
     bool ipv6_was_enabled;
+    char resolv_target[256];
+    bool resolv_existed;
 } tun_manager_t;
 
 void tun_mgr_init(tun_manager_t *mgr);
 bool tun_mgr_is_root(void);
+bool tun_mgr_has_net_admin(void);
+void tun_mgr_priv_init(void);
+void tun_mgr_priv_elevate(void);
+void tun_mgr_priv_drop(void);
 const char *tun_mgr_find_xray(tun_manager_t *mgr);
 int tun_mgr_connect(tun_manager_t *mgr, const server_node_t *node);
 int tun_mgr_disconnect(tun_manager_t *mgr);
 void tun_mgr_cleanup(tun_manager_t *mgr);
 
-#endif // TUN_MGR_H
+/* Safe process execution without shell interpolation */
+int run_cmd(const char *const argv[]);
+
+#endif /* TUN_MGR_H */

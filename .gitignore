@@ -12,5 +12,16 @@ xray
 *.tar
 *.gz
 
-# Runtime files
+# Runtime and cache files
 /tmp/psyche_*
+.cache/
+
+# Editor and tool temporary files
+*.swp
+*~
+*.bak
+*.orig
+.DS_Store
+compile_commands.json
+.vscode/
+.idea/

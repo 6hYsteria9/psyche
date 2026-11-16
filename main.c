@@ -1,25 +1,22 @@
 #define _GNU_SOURCE
+#include "config.h"
 #include "sub_parser.h"
 #include "tun_mgr.h"
 #include "tui.h"
-#include "cJSON.h"
-
-#if defined(__has_include) && __has_include("config.h")
-#include "config.h"
-#else
-#include "../config.def.h"
-#endif
+#include "ping.h"
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include <fcntl.h>
 #include <signal.h>
 #include <sys/stat.h>
 #include <pwd.h>
+#include <locale.h>
 
-static tun_manager_t g_tun;
-static tui_state_t   g_tui;
+static tun_manager_t  g_tun;
+static tui_state_t    g_tui;
 static subscription_t g_sub;
 static volatile sig_atomic_t g_running = 1;
 
@@ -33,8 +30,24 @@ static void sigwinch_handler(int sig) {
     tui_update_size(&g_tui);
 }
 
+static void fatal_handler(int sig) {
+    tui_raw_mode_disable();
+    tun_mgr_cleanup(&g_tun);
+    struct sigaction sa;
+    memset(&sa, 0, sizeof(sa));
+    sa.sa_handler = SIG_DFL;
+    sigaction(sig, &sa, NULL);
+    raise(sig);
+}
+
 static void get_config_dir(char *buf, size_t len) {
-    const char *home = getenv("HOME");
+    const char *home = NULL;
+    const char *s_uid = getenv("SUDO_UID");
+    if (s_uid) {
+        struct passwd *pw = getpwuid((uid_t)atoi(s_uid));
+        if (pw) home = pw->pw_dir;
+    }
+    if (!home) home = getenv("HOME");
     if (!home) {
         struct passwd *pw = getpwuid(getuid());
         if (pw) home = pw->pw_dir;
@@ -46,7 +59,6 @@ static void get_config_dir(char *buf, size_t len) {
 static void ensure_config_dir(const char *dir) {
     char tmp[512];
     snprintf(tmp, sizeof(tmp), "%s", dir);
-    // Create ~/.config if needed
     char *slash = strrchr(tmp, '/');
     if (slash) {
         *slash = '\0';
@@ -61,41 +73,17 @@ static void load_app_config(char *url, size_t url_len, char *tun_dev, size_t dev
     get_config_dir(dir, sizeof(dir));
     snprintf(cfg_file, sizeof(cfg_file), "%s/config.json", dir);
 
-    FILE *f = fopen(cfg_file, "r");
-    if (!f) return;
-
-    fseek(f, 0, SEEK_END);
-    long sz = ftell(f);
-    fseek(f, 0, SEEK_SET);
-    if (sz <= 0) { fclose(f); return; }
-
-    char *buf = (char *)malloc(sz + 1);
-    if (!buf) { fclose(f); return; }
-
-    size_t r = fread(buf, 1, sz, f);
+    int fd = open(cfg_file, O_RDONLY);
+    if (fd < 0) return;
+    char buf[2048];
+    ssize_t r = read(fd, buf, sizeof(buf) - 1);
+    close(fd);
+    if (r <= 0) return;
     buf[r] = '\0';
-    fclose(f);
 
-    cJSON *root = cJSON_Parse(buf);
-    free(buf);
-    if (!root) return;
-
-    cJSON *u = cJSON_GetObjectItem(root, "subscription_url");
-    if (u && cJSON_IsString(u) && url[0] == '\0') {
-        snprintf(url, url_len, "%s", u->valuestring);
-    }
-
-    cJSON *d = cJSON_GetObjectItem(root, "tun_dev");
-    if (d && cJSON_IsString(d) && tun_dev[0] == '\0') {
-        snprintf(tun_dev, dev_len, "%s", d->valuestring);
-    }
-
-    cJSON *fitem = cJSON_GetObjectItem(root, "fingerprint");
-    if (fitem && cJSON_IsString(fitem) && fp && fp[0] == '\0') {
-        snprintf(fp, fp_len, "%s", fitem->valuestring);
-    }
-
-    cJSON_Delete(root);
+    if (url && url[0] == '\0') json_get_str(buf, "subscription_url", url, url_len);
+    if (tun_dev && tun_dev[0] == '\0') json_get_str(buf, "tun_dev", tun_dev, dev_len);
+    if (fp && fp[0] == '\0') json_get_str(buf, "fingerprint", fp, fp_len);
 }
 
 static void save_app_config(const char *url, const char *tun_dev, const char *fp) {
@@ -104,21 +92,11 @@ static void save_app_config(const char *url, const char *tun_dev, const char *fp
     ensure_config_dir(dir);
     snprintf(cfg_file, sizeof(cfg_file), "%s/config.json", dir);
 
-    cJSON *root = cJSON_CreateObject();
-    if (url && url[0]) cJSON_AddStringToObject(root, "subscription_url", url);
-    if (tun_dev && tun_dev[0]) cJSON_AddStringToObject(root, "tun_dev", tun_dev);
-    if (fp && fp[0]) cJSON_AddStringToObject(root, "fingerprint", fp);
-
-    char *printed = cJSON_Print(root);
-    cJSON_Delete(root);
-    if (!printed) return;
-
-    FILE *f = fopen(cfg_file, "w");
-    if (f) {
-        fputs(printed, f);
-        fclose(f);
-    }
-    free(printed);
+    int fd = open(cfg_file, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    if (fd < 0) return;
+    dprintf(fd, "{\n  \"subscription_url\": \"%s\",\n  \"tun_dev\": \"%s\",\n  \"fingerprint\": \"%s\"\n}\n",
+            url ? url : "", tun_dev ? tun_dev : "", fp ? fp : "");
+    close(fd);
 }
 
 static void print_usage(const char *prog) {
@@ -133,17 +111,23 @@ static void print_usage(const char *prog) {
     printf("Keybindings:\n");
     printf("  Enter                 Connect / Disconnect selected node\n");
     printf("  j / k, Up / Down      Navigate node list\n");
+    printf("  g / G, Home / End     Jump to top / bottom\n");
     printf("  d                     Disconnect VPN\n");
-    printf("  f                     Cycle TLS fingerprint (chrome, randomized, firefox...)\n");
+    printf("  f                     Cycle TLS fingerprint\n");
     printf("  u                     Update subscription from URL\n");
     printf("  s                     Change subscription URL\n");
     printf("  p                     Ping selected node\n");
+    printf("  P                     Ping all nodes in parallel\n");
+    printf("  o                     Sort nodes by latency (asc/desc/orig)\n");
     printf("  /                     Filter / search nodes\n");
     printf("  Esc                   Clear search filter\n");
     printf("  q                     Quit\n");
 }
 
 int main(int argc, char **argv) {
+    setlocale(LC_ALL, "");
+    tun_mgr_priv_init();
+
     char cli_url[1024] = {0};
     char cli_file[512] = {0};
     char cli_dev[32] = {0};
@@ -164,10 +148,10 @@ int main(int argc, char **argv) {
         }
     }
 
-    // Load saved settings if not provided on CLI
+    /* Load saved settings if not provided on CLI */
     load_app_config(cli_url, sizeof(cli_url), cli_dev, sizeof(cli_dev), cli_fp, sizeof(cli_fp));
 
-    // Initialize systems
+    /* Initialize systems */
     sub_init(&g_sub);
     tun_mgr_init(&g_tun);
     if (cli_dev[0]) {
@@ -178,7 +162,7 @@ int main(int argc, char **argv) {
     }
     tui_init(&g_tui);
 
-    // Setup signal handlers
+    /* Setup signal handlers */
     struct sigaction sa;
     memset(&sa, 0, sizeof(sa));
     sa.sa_handler = sig_handler;
@@ -191,30 +175,36 @@ int main(int argc, char **argv) {
     sa_winch.sa_handler = sigwinch_handler;
     sigaction(SIGWINCH, &sa_winch, NULL);
 
-    // Cache file path
+    /* Safety fatal handlers */
+    struct sigaction sa_fatal;
+    memset(&sa_fatal, 0, sizeof(sa_fatal));
+    sa_fatal.sa_handler = fatal_handler;
+    sigaction(SIGSEGV, &sa_fatal, NULL);
+    sigaction(SIGABRT, &sa_fatal, NULL);
+    sigaction(SIGBUS, &sa_fatal, NULL);
+    sigaction(SIGFPE, &sa_fatal, NULL);
+    sigaction(SIGILL, &sa_fatal, NULL);
+
+    /* Cache file path */
     char dir[512], cache_file[1024];
     get_config_dir(dir, sizeof(dir));
     ensure_config_dir(dir);
     snprintf(cache_file, sizeof(cache_file), "%s/cached_nodes.txt", dir);
 
-    // Load nodes — or show first-run setup if no source is configured
+    /* Load nodes — or show first-run setup if no source is configured */
     if (cli_url[0] == '\0' && cli_file[0] == '\0') {
-        // No subscription URL from CLI or config — first run
         if (!tui_first_run(&g_tui, &g_sub)) {
             tui_cleanup();
             sub_free(&g_sub);
             return 0;
         }
-        // tui_first_run populated g_sub.url and fetched nodes
         save_app_config(g_sub.url, g_tun.tun_dev, g_tun.fingerprint);
         sub_save_cache(&g_sub, cache_file);
     } else if (cli_file[0]) {
         sub_load_file(&g_sub, cli_file);
     } else if (cli_url[0]) {
         snprintf(g_sub.url, sizeof(g_sub.url), "%s", cli_url);
-        // Try cache first for instant launch
         if (sub_load_cache(&g_sub, cache_file) <= 0) {
-            // Fetch from URL if cache is empty
             sub_fetch_url(&g_sub, cli_url);
             sub_save_cache(&g_sub, cache_file);
         }
@@ -222,13 +212,13 @@ int main(int argc, char **argv) {
 
     tui_update_filter(&g_tui, &g_sub);
 
-    // Check privileges & show hint
-    if (!tun_mgr_is_root()) {
+    /* Check privileges */
+    if (!tun_mgr_has_net_admin()) {
         snprintf(g_tui.status_msg, sizeof(g_tui.status_msg),
-                 "no root — sudo/doas will be invoked for tun setup");
+                 "no net_admin — sudo/doas will be invoked for tun setup");
     }
 
-    // Enable Raw Mode and enter event loop
+    /* Enable Raw Mode and enter event loop */
     tui_raw_mode_enable();
 
     while (g_running) {
@@ -238,11 +228,11 @@ int main(int argc, char **argv) {
         }
     }
 
-    // Teardown
+    /* Teardown */
     tui_raw_mode_disable();
     tun_mgr_cleanup(&g_tun);
 
-    // Save cache and config
+    /* Save cache and config */
     if (g_sub.count > 0) {
         sub_save_cache(&g_sub, cache_file);
     }

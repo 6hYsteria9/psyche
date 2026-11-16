@@ -1,23 +1,23 @@
 # Psyche
 
-**Psyche** is a minimalist terminal VPN client written in pure C for Linux, powered by **Xray-core** in TUN mode.
+**Psyche** is an ultra-minimalist terminal VPN client written in pure C for Linux, powered by **Xray-core** in TUN mode.
 
-Built as a small project for myself only. There's zero GUI or ncurses dependencies. It provides full system-wide Layer 3 tunneling, DPI circumvention (packet fragmentation), and uTLS fingerprint cycling.
+Built strictly adhering to the suckless philosophy: zero desktop bloat, zero GUI, and zero external library dependencies (no `ncurses`, no `cJSON`, no `libnetlink`). It provides full system-wide Layer 3 tunneling, deep packet inspection (DPI) circumvention, and live uTLS fingerprint cycling inside a tiny standalone binary (< 48 KB).
 
 ---
 
-## Target Platform: Void Linux + iwd
+## Universal Linux Architecture
 
-Psyche is designed specifically for minimalistic Linux setups, running on:
-* **Void Linux** (compatible with both `glibc` and `musl`)
-* **`iwd`** (Intel Wireless Daemon) or standard Ethernet
-* **`runit`** init system (no `systemd` or `systemd-resolved` dependencies)
+Unlike mainstream VPN clients that hard-depend on NetworkManager dispatcher scripts, systemd D-Bus APIs, or Polkit desktop agents, Psyche interfaces directly with the standard **Linux Kernel**:
 
-### Why Void + iwd?
-1. **Direct Kernel Routing:** Standard VPN clients rely on NetworkManager dispatcher scripts or `systemd-resolved` DBus APIs. Psyche discovers your physical gateway and network interface directly via `iproute2`, binding routing tables (`0.0.0.0/1` and `128.0.0.0/1`) cleanly without daemon bloat.
-2. **Deterministic DNS Management:** Backs up `/etc/resolv.conf` on connect and restores it atomically on disconnect, avoiding conflicts with systemd service managers.
-3. **Kernel Orphan Protection:** Spawns Xray with `PR_SET_PDEATHSIG`, ensuring child processes are automatically reaped by the Linux kernel if Psyche or your Wayland session abruptly exits.
-4. **Dual-Stack Leak Suppression:** Temporarily shields IPv6 through `/proc/sys/net/ipv6/conf/all/disable_ipv6` during active tunnel links.
+* **Runs on Any Distribution:** Completely agnostic of distribution layout. Works seamlessly on **Arch, Void, Debian, Ubuntu, Fedora, Alpine, Gentoo, openSUSE, NixOS**, etc.
+* **Dual C Library Support:** Compiles cleanly with both **`glibc`** and **`musl`** with standard C99/POSIX conformance (ideal for Alpine or minimal embedded Linux setups).
+* **Init System Agnostic:** Operates identically whether your system boots with **`systemd`**, **`runit`**, **`OpenRC`**, **`s6`**, **`dinit`**, or runs headless inside a bare SSH session.
+* **Network Stack Agnostic:** Discovers active default gateways directly from kernel `/proc/net/route` and `rtnetlink`. Works regardless of whether your network is managed by **`NetworkManager`**, **`iwd`**, **`wpa_supplicant`**, **`systemd-networkd`**, or static Ethernet.
+* **Direct Kernel Netlink (`rtnetlink`):** Configures Layer 3 TUN routes (`0.0.0.0/1` and `128.0.0.0/1`) and IP addresses via in-process Netlink socket calls (`AF_NETLINK`), eliminating the latency and overhead of spawning external helper processes.
+* **Atomic Symlink-Aware DNS:** Resolves canonical `/etc/resolv.conf` targets and performs atomic same-filesystem `rename(2)` swaps, safely coexisting with systemd-resolved, openresolv, or static configs without breaking symlinks.
+* **Kernel Orphan Protection:** Spawns Xray with `PR_SET_PDEATHSIG`, guaranteeing that the background routing engine is reaped immediately by the kernel if Psyche or your terminal abruptly terminates.
+* **Dual-Stack Leak Suppression:** Temporarily shields IPv6 through `/proc/sys/net/ipv6/conf/all/disable_ipv6` during active links.
 
 ---
 
@@ -28,50 +28,75 @@ Psyche is designed specifically for minimalistic Linux setups, running on:
   * **VMess** (Base64 JSON format)
   * **Trojan** (TLS)
   * **Shadowsocks**
-* **DPI Evasion (hello cheburnet):**
-  * Slices the TLS ClientHello into TCP micro-chunks (packets: tlshello, length: 10-20) so TSPU buffers can't extract the SNI domain, bypassing blocks and throttling (YouTube, Discord, etc.) on domestic ISPs.
-  * Automatically parses and applies fragmentation settings straight from subscription links into Xray dialerProxy rules.
+* **DPI Circumvention (Bypass Throttling & Blocks):**
+  * Slices the TLS ClientHello into TCP micro-chunks (packets: `tlshello`, length: `10-20`) so ISP DPI / TSPU middleboxes cannot extract the SNI domain, bypassing throttling and blocks on domestic connections.
+  * Parses and applies fragmentation settings directly from subscription links into Xray `dialerProxy` rules.
 * **Network & Fingerprint Protection:**
   * **uTLS Fingerprint Cycling:** Press `f` to cycle between `chrome`, `randomized`, `firefox`, `safari`, and `ios` with live tunnel relinking.
   * **IPv6 Kill-Switch:** Eliminates dual-stack leaks when connected to IPv6-enabled wireless routers.
-  * **Local Proxies:** Exposes auxiliary local **SOCKS5** (`127.0.0.1:10808`) and **HTTP** (`127.0.0.1:10809`) endpoints alongside TUN.
-* **Terminal Native:**
+  * **Local Inbounds:** Exposes auxiliary local **SOCKS5** (`127.0.0.1:10808`) and **HTTP** (`127.0.0.1:10809`) endpoints alongside TUN.
+* **High-Performance Non-Blocking Ping Engine:**
+  * Press `P` to probe all servers simultaneously via non-blocking sockets and `poll()` without DNS delays.
+  * Press `o` to sort nodes by latency (lowest ping first, unmeasured second, timeouts last).
+* **Terminal Native & Full UTF-8:**
   * No `ncurses` — communicates directly over raw VT100/ANSI sequences via `termios`.
   * Preserves terminal emulator background color, transparency, and Wayland blur.
-  * Full UTF-8 support with East Asian and emoji-flag character width handling.
+  * Full multi-byte UTF-8 input, Cyrillic / Russian case-insensitive search (`utf8_strcasestr`), and multi-byte backspacing.
+  * Correct character width calculation for East Asian scripts and emoji flag glyphs.
 
 ---
 
-## Installation on Void Linux
+## Installation
 
-### 1. Install Dependencies
+The only external requirement is **[Xray-core](https://github.com/XTLS/Xray-core)**. Psyche itself compiles with standard C build tools (`gcc` or `clang` and `make`).
+
+### 1. Install Build Tools & Xray
+
+#### Universal (Any Linux Distro)
 ```sh
-# Install base toolchain, curl, and iproute2
-xbps-install -S gcc make curl iproute2
+# 1. Install standard build tools (gcc, make, curl) using your package manager:
+# Arch:          sudo pacman -S gcc make curl
+# Debian/Ubuntu: sudo apt install build-essential curl
+# Fedora:        sudo dnf install gcc make curl
+# Void:          sudo xbps-install -S gcc make curl
+# Alpine:        sudo apk add build-base curl
 
-# Install Xray-core (download official release binary)
+# 2. Download official Xray-core binary:
 curl -Lo /tmp/xray.zip https://github.com/XTLS/Xray-core/releases/latest/download/Xray-linux-64.zip
 sudo unzip -j /tmp/xray.zip xray -d /usr/local/bin/
 sudo chmod +x /usr/local/bin/xray
+rm -f /tmp/xray.zip
 ```
 
-### 2. Build Psyche
+### 2. Build & Install Psyche
 
 ```sh
 git clone https://github.com/6hYsteria9/psyche.git
 cd psyche
 
-# Optional: edit config.mk for paths or config.def.h for defaults
+# Optional: edit config.mk for paths or config.def.h for custom defaults
 make
 sudo make install
 ```
-Binaries install to `/usr/local/bin/psyche` and man pages install to `/usr/local/share/man/man1/psyche.1`.
+
+Binaries are installed to `/usr/local/bin/psyche` and man pages to `/usr/local/share/man/man1/psyche.1`.
 
 ---
 
 ## Usage
 
-Because Psyche configures network interfaces and routing tables, it requires root permissions (`sudo` or `doas`):
+Psyche configures network interfaces and routing tables using direct Linux kernel Netlink (`rtnetlink`).
+
+### Option A: Running with File Capabilities (Recommended)
+
+Grant network administration capabilities to run Psyche completely unprivileged without `sudo`:
+
+```sh
+sudo setcap cap_net_admin,cap_net_bind_service+ep /usr/local/bin/psyche
+psyche
+```
+
+### Option B: Running with sudo / doas
 
 ```sh
 # First run (prompts for subscription URL if not configured):
@@ -83,6 +108,8 @@ sudo psyche -u "https://example.com/subscription"
 # Or load from a local file:
 sudo psyche -f /path/to/links.txt
 ```
+
+When invoked via `sudo`, Psyche automatically drops effective privileges to the real invoking user (`$SUDO_UID`), saving user configuration into `~/.config/psyche/` without root ownership conflicts.
 
 ---
 
@@ -97,6 +124,8 @@ sudo psyche -f /path/to/links.txt
 | `PageDown` / `PageUp` | Scroll 10 nodes |
 | `g` / `G` | Jump to first / last node |
 | `p` | Measure TCP ping latency to selected server |
+| `P` | Measure TCP ping latency to all filtered servers in parallel |
+| `o` | **Sort nodes by latency** (toggles lowest ping / highest ping / original) |
 | `/` | Search / filter nodes by name or address (`Esc` to clear) |
 | `s` | Enter / edit subscription URL |
 | `u` | Update nodes from configured subscription URL |
@@ -106,7 +135,7 @@ sudo psyche -f /path/to/links.txt
 
 ## Configuration
 
-Custom compile-time options are configured in `config.h` (copied from `config.def.h` on first build):
+Custom compile-time options are configured in `config.h` (copied automatically from `config.def.h` on first build, following the `dwm` tradition):
 
 ```c
 /* Interface & Port defaults */
@@ -125,25 +154,23 @@ static const char *fingerprints[] = {
 
 ---
 
-## Repository Structure
+## Repository Structure (dwm-style flat-file layout)
 
 ```text
 psyche/
 ├── .gitignore        # Build & artifact exclusions
-├── config.def.h      # Compile-time default configurations
+├── config.def.h      # Compile-time default configurations, timeouts, keys, paths
 ├── config.mk         # Toolchain and installation paths
 ├── LICENSE           # Permissive ISC license
-├── Makefile          # Clean build & package script
+├── main.c            # Entry point, signals, config persistence, privilege dropping
+├── Makefile          # Clean suckless build script
+├── ping.c / .h       # Non-blocking parallel TCP ping engine
 ├── psyche.1          # Unix troff/groff manual page
 ├── README.md         # Documentation
-└── src/
-    ├── cJSON.c / .h       # Lightweight JSON parser
-    ├── main.c             # Entry point, signals, config persistence
-    ├── ping.c / .h        # Non-blocking TCP ping engine
-    ├── sub_parser.c / .h  # Subscription link & fragment parser
-    ├── tui.c / .h         # Minimalist ANSI terminal TUI
-    ├── tun_mgr.c / .h     # Routing, kernel signal hooks, IPv6 shielding
-    └── xray_config.c / .h # Xray routing and JSON stream generator
+├── sub_parser.c / .h # Subscription link parser & lightweight tokenizers
+├── tui.c / .h        # Minimalist ANSI terminal TUI & UTF-8 / Cyrillic search engine
+├── tun_mgr.c / .h    # Direct kernel Netlink routing, atomic DNS, privilege management
+└── xray_config.c / .h# Static Xray JSON template generator
 ```
 
 ---
@@ -151,5 +178,3 @@ psyche/
 ## License
 
 ISC License. See [`LICENSE`](LICENSE) for details.
-
-

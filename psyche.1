@@ -70,6 +70,12 @@ Cycle TLS/uTLS fingerprint profile. Relinks the active tunnel if connected.
 .B p
 Perform a TCP ping latency probe against the selected node.
 .TP
+.B P
+Perform a parallel non-blocking TCP ping latency probe against all filtered nodes.
+.TP
+.B o
+Sort nodes by latency (toggles ascending / descending / original subscription order).
+.TP
 .B /
 Enter search/filter mode. Press Escape to clear filter.
 .TP
@@ -93,6 +99,19 @@ to eliminate dual-stack address leaks.
 .IP \(bu 2
 Safe Routing: Routes traffic via \fB0.0.0.0/1\fR and \fB128.0.0.0/1\fR to prevent
 routing loops and preserve original gateway interfaces.
+.IP \(bu 2
+Direct Kernel Netlink: Uses in-process \fBAF_NETLINK\fR sockets to manipulate links and routes without spawning external processes.
+.IP \(bu 2
+Atomic DNS: Employs atomic \fBrename(2)\fR operations on the same filesystem with symlink resolution to prevent corrupting \fB/etc/resolv.conf\fR.
+.SH PRIVILEGES AND CAPABILITIES
+.B psyche
+supports running with Linux ambient file capabilities:
+.PP
+.nf
+    sudo setcap cap_net_admin,cap_net_bind_service+ep /usr/local/bin/psyche
+.fi
+.PP
+When set, \fBpsyche\fR runs completely unprivileged without needing \fBsudo\fR or \fBdoas\fR. When started via \fBsudo\fR, \fBpsyche\fR drops effective privileges to the caller's real user ID (\fBSUDO_UID\fR) during the interactive session.
 .SH FILES
 .TP
 .I ~/.config/psyche/config.json
